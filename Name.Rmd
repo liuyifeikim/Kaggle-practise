@@ -1,0 +1,54 @@
+---
+title: "Chinese Name"
+author: "KIM"
+date: "2019/1/24"
+output: html_document
+---
+
+```{r}
+pacman::p_load(tidyverse)
+```
+
+```{r}
+name <- read_table("https://raw.githubusercontent.com/wainshine/Chinese-Names-Corpus/master/Chinese_Names_Corpus%EF%BC%88120W%EF%BC%89.txt")
+name <- name %>% rename(name = `By@萌名`)  #rename column
+name <- name %>% filter(!str_detect(name, "\\d")) #delete number
+name
+```
+
+```{r}
+name <- name %>% 
+  mutate(xing = str_sub(name, 1, 1)) %>%  #提取姓氏
+  mutate(ming = str_sub(name, 2)) %>%     #提取名字
+  mutate(len = str_count(name))           #姓名长度
+name
+```
+```{r}
+name %>% 
+  count(xing, sort = T)
+name %>% 
+  count(ming, sort = T)
+name %>% 
+  count(len, sort = T)
+```
+```{r, fig.height=10, fig.width=10}
+name %>% 
+  group_by(len) %>% 
+  count(ming, sort = T) %>% 
+  top_n(n = 30, wt = n) %>% 
+  ggplot(aes(reorder(ming, n), n, fill = factor(len))) +
+  geom_col(show.legend = F) +
+  labs(x = "Ming") +
+  facet_wrap(~ len, nrow = 1, scales = "free_y") +
+  coord_flip()
+```
+```{r}
+name %>%
+  filter(len == 3) %>% 
+  count(ming, sort = T) %>% 
+  top_n(20, wt = n) %>% 
+  separate(col = ming, into = c("n1", "n2"), sep = 1, remove = T)
+```
+```{r}
+```
+
