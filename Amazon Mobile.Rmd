@@ -1,0 +1,224 @@
+---
+title: "Amazon Mobile"
+author: "KIM"
+date: "2019/1/26"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(topicmodels)
+```
+
+```{r}
+kaggle_path <- "D:/K/DATA EXERCISE/Kaggle/"
+data_name <- "Amazon_Unlocked_Mobile.csv"
+phone <- read_csv(paste0(kaggle_path, data_name))
+phone <- phone %>% 
+  rename(Product = `Product Name`, Brand = `Brand Name`, Votes = `Review Votes`) %>% 
+  mutate(Brand = toupper(Brand),
+         ROW_ID = row_number())
+glimpse(phone)
+phone %>% head()
+```
+```{r}
+#清理品牌名称
+phone <- phone %>% 
+  mutate(Brand = if_else(str_detect(Brand, "AMAZON.*"), "AMAZON", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "APPLE.*"), "APPLE", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "ASUS.*"), "ASUS", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "BLACK\\s?BER+Y.*"), "BLACKBERRY", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "CAT.*"), "CAT", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "FOSLER.*"), "FOSLER", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "GOOGLE.*"), "GOOGLE", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "HOMTOM.*"), "HOMTOM", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "HP.*"), "HP", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "HTC.*"), "HTC", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "INDIGI.*"), "INDIGI", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "IPRO.*"), "IPRO", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "JOHN'S.*"), "JOHN'S", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "LENOVO.*"), "LENOVO", Brand))%>% 
+  mutate(Brand = if_else(str_detect(Brand, "LG\\s?\\w{3,}.*"), "LG", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "MOTO.*"), "MOTO", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, ".*NOKIA"), "NOKIA", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "OFEELY.*"), "OFEELY", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "PLUM.*"), "PLUM", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "SANYO.*"), "SANYO", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "SHENZHEN SNOPOW.*"), "SHENZHEN SNOPOW", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "SONY.*"), "SONY", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "SONIM.*"), "SONIM", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "UT\\s?STARCOM"), "UT STARCOM", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "WORRYFREE.*"), "WORRYFREE", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "YEZZ.*"), "YEZZ", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "ZTE.*"), "ZTE", Brand)) %>% 
+  mutate(Brand = if_else(str_detect(Brand, "SAMS+UNG.*"), "SAMSUNG", Brand)) %>% 
+  mutate(Brand = if_else(is.na(Brand), "UNKNOWN", Brand))
+phone %>% count(Brand, sort = T)
+```
+
+#不同品牌评价情感分数比较
+```{r}
+brand_tidy <- phone %>% 
+  unnest_tokens(input = Reviews, output = word) %>%  #每行一词
+  filter(!is.na(Brand)) %>%                          #删除BRAND为缺失的
+  filter(!str_detect(word, "\\d+")) %>%              #删除数字
+  select(Brand, word) %>%                            #保留两列
+  anti_join(stop_words, by = "word")                 #删除停词
+brand_tidy
+```
+
+
+```{r}
+brand_tidy_bing <- brand_tidy %>% 
+  inner_join(get_sentiments("bing"), by = "word")
+brand_tidy_bing
+```
+
+
+```{r fig.height=8, fig.width=10}
+brand_sentiment_score <- brand_tidy_bing %>% 
+  count(Brand, sentiment) %>% 
+  spread(key = sentiment, value = n, fill = 0) %>% 
+  mutate(total = positive + negative,
+         score = (positive - negative) / (positive + negative))
+
+brand_sentiment_score %>% 
+  filter(total >= 500) %>% 
+  ggplot(aes(reorder(Brand, score), score, fill = score > 0 )) +
+  geom_col(show.legend = F) +
+  labs(x = "Brand Name", y = "Sentimental Score") +
+  coord_flip()
+```
+
+#不同品牌评论的关键词
+```{r}
+brand_tidy %>% 
+  count(Brand, word) %>% 
+  bind_tf_idf(document = Brand, term = word, n = n) %>% 
+  filter(Brand %in% c("SAMSUNG", "APPLE", "HUAWEI", "MICROSOFT")) %>% 
+  group_by(Brand) %>% 
+  top_n(n = 10, wt = tf_idf) %>% 
+  ggplot(aes(reorder(word, tf_idf), tf_idf, fill = Brand)) +
+  geom_col(show.legend = F) +
+  labs(x = "Word", y = "tf_idf") +
+  coord_flip() +
+  facet_wrap(~ Brand, scales = "free")
+```
+
+#不同品牌情感得分与Rating情况
+```{r}
+brand_rating <- phone %>% 
+  group_by(Brand) %>% 
+  summarise(mean_rating = mean(Rating, na.rm = T))
+brand_rating
+```
+```{r}
+brand_score_rating <- brand_sentiment_score %>% 
+  left_join(brand_rating, by = "Brand") %>% 
+  select(Brand, score, mean_rating)
+brand_score_rating
+```
+
+
+```{r}
+brand_score_rating %>% 
+  ggplot(aes(score, mean_rating)) +
+  geom_point(color = "blue") +
+  geom_smooth(method = "lm")
+```
+```{r}
+cor.test(brand_score_rating$score, brand_score_rating$mean_rating) #相关系数
+```
+
+#不同品牌评价情感分数与平均价格关系
+```{r}
+brand_price <- phone %>% 
+  group_by(Brand) %>% 
+  summarise(mean_price = mean(Price, na.rm = T)) %>% 
+  arrange(-mean_price)
+brand_price
+```
+```{r}
+brand_sentiment_score %>% 
+  left_join(brand_price, by = "Brand") %>% 
+  select(Brand, score, mean_price) -> brand_score_price
+brand_score_price
+```
+```{r}
+brand_score_price %>% 
+  ggplot(aes(mean_price, score)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+#评价长度与Vote关系
+```{r}
+summary(phone$Votes)
+phone %>% ggplot(aes(Votes, ..density..)) +
+  geom_histogram() +
+  geom_density()
+```
+```{r}
+review_clear <- phone %>% 
+  unnest_tokens(input = Reviews, output = word) %>% 
+  filter(!str_detect(word, "\\d+")) %>%   #删除数字
+  filter(!str_detect(word, "\\W")) %>%    #非字母和数字
+  anti_join(stop_words, by = "word")      #排除停用词
+review_clear
+```
+```{r}
+prod_valid_word <- review_clear %>% 
+  group_by(ROW_ID) %>% 
+  mutate(valid_word = n()) %>% 
+  select(ROW_ID, valid_word) %>% 
+  distinct() %>% 
+  left_join(phone, by = "ROW_ID") %>% 
+  select(ROW_ID, valid_word, Votes, Rating)
+prod_valid_word
+```
+
+
+```{r}
+prod_valid_word %>% 
+  ggplot(aes(valid_word, Votes)) +
+  geom_point() +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method = "lm")
+```
+```{r}
+cor.test(prod_valid_word$valid_word, prod_valid_word$Votes)
+```
+#主题模型
+```{r}
+review_clear_dtm <-       #将整洁数据转化为稀疏矩阵
+  review_clear %>% 
+  count(ROW_ID, word) %>% #转为DTM前先用count
+  cast_dtm(document = ROW_ID, term = word, value = n)
+review_clear_dtm
+```
+
+```{r}
+review_lda <- LDA(review_clear_dtm, k = 3, control = list(seed = 100))
+review_lda
+```
+```{r}
+review_lda_beta <- tidy(review_lda, matrix = "beta")
+review_lda_beta
+```
+```{r, fig.width=10}
+review_lda_beta %>% 
+  group_by(topic) %>% 
+  top_n(n = 20, wt = beta) %>% 
+  ggplot(aes(reorder(term, beta), beta, fill = factor(topic))) +
+  geom_col(show.legend = F) +
+  labs(x = "term") +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+```
+```{r}
+review_lda_gamma <- tidy(review_lda, matrix = "gamma")
+review_lda_gamma
+```
+
