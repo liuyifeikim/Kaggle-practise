@@ -1,0 +1,25 @@
+---
+title: "Employee"
+author: "KIM"
+date: "2019/2/1"
+output: html_document
+---
+
+```{r cars}
+library(data.table)
+library(tidyverse)
+library(tidytext)
+```
+
+```{r}
+kaggle_path <- "D:/K/DATA EXERCISE/Kaggle/"
+data_name <- "employee_reviews.csv"
+employee <- fread(paste0(kaggle_path, data_name))
+employee %>% head(10)
+```
+
+```{r}
+employee %>% 
+  count(company, sort = T)
+```
+
