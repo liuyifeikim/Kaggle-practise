@@ -1,0 +1,151 @@
+---
+title: "Google"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library(data.table)
+library(magrittr)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(e1071) #naivebayes
+library(naivebayes) #naivebayes
+library(klaR) #naivebayes
+library(caret) 
+library(RMySQL)
+library(DMwR) #SMOTE
+library(pROC) 
+```
+
+```{r}
+google <- fread("job_skills.csv", encoding = "UTF-8")
+str(google)
+head(google)
+```
+
+```{r}
+kaggle_mysql <- dbConnect(MySQL(), host="localhost", dbname="kaggle", user="root", password="liuyifei")
+dbListTables(kaggle_mysql)
+google_mysql <- dbReadTable(kaggle_mysql, "job_skills_csv")
+str(google_mysql)
+```
+
+```{r}
+unique(google$Title) %>% length()
+unique(google$Category) %>% length()
+unique(google$Location) %>% length()
+```
+
+```{r}
+table(google$Category) #职位类别分布
+google$tech_yn <- ifelse(google$Category %in% c("Technical Solutions", "Program Management", "Software Engineering", "Hardware Engineering", "Technical Infrastructure", "Network Engineering", "IT & Data Management", "Technical Writing", "Data Center & Network"), 1, 0) %>% factor(levels = c(0, 1), labels = c("No", "Yes"))
+table(google$tech_yn) #是否技术岗位
+```
+
+```{r}
+qua_corpus <- Corpus(VectorSource(google$`Preferred Qualifications`))
+qua_corpus
+qua_corpus_copy <- qua_corpus #后面用作提取词干后的补笔
+inspect(qua_corpus[[2]])
+```
+
+```{r}
+corpus_clean_fun <- function(corpus){
+  corpus_c <- tm_map(corpus, removeNumbers)
+  corpus_c <- tm_map(corpus_c, removePunctuation)
+  corpus_c <- tm_map(corpus_c, tolower)
+  corpus_c <- tm_map(corpus_c, removeWords, stopwords(kind = "en"))
+  #corpus_c <- tm_map(corpus_c, stemDocument)  #提取词干
+  #corpus_c <- tm_map(corpus_c, stemCompletion, dictionary = qua_corpus_copy, type = "prevalent") #用出现最频繁的词进行补笔
+  corpus_c <- tm_map(corpus_c, stripWhitespace)
+  return(corpus_c)
+}
+qua_corpus_c <- corpus_clean_fun(qua_corpus)
+qua_corpus_c
+inspect(qua_corpus_c[[3]])
+```
+
+```{r}
+qua_dtm <- DocumentTermMatrix(qua_corpus_c)
+qua_dtm
+qua_dtm_matrix <- as.matrix(qua_dtm)
+qua_dtm_matrix[1:10, 1:5]
+```
+
+```{r}
+term_freq <- colSums(qua_dtm_matrix)
+term_freq %>% sort(decreasing = T) %>% head(50)  #出现次数前50的词
+```
+
+```{r}
+qua_dtm_09 <- removeSparseTerms(qua_dtm, 0.9)
+qua_dtm_09
+freq_09 <- colSums(as.matrix(qua_dtm_09))
+freq_09
+wordcloud(names(freq_09), freq_09)
+```
+
+```{r}
+sum(qua_dtm_matrix[,c("python")])
+```
+
+```{r}
+#生成训练集和测试集
+google_df <- as.data.frame(google) #变成数据框
+set.seed(100)
+train_id <- createDataPartition(google_df$tech_yn, p = 0.75)
+
+#原始数据
+google_df_train <- google_df[train_id$Resample1,]
+google_df_test <- google_df[-train_id$Resample1,]
+
+#dtm
+qua_dtm_train <- qua_dtm[train_id$Resample1,]
+qua_dtm_test <- qua_dtm[-train_id$Resample1,]
+
+#语料库
+qua_corpus_c_train <- qua_corpus_c[train_id$Resample1]
+qua_corpus_c_test <- qua_corpus_c[-train_id$Resample1]
+```
+
+```{r}
+dict_10 <- findFreqTerms(qua_dtm, lowfreq = 10) #创建字典，后面创建训练测试集去使用
+dict_10 %>% head(10)
+convert_counts <- function(x){   #将数值转化为因子
+  x <- ifelse(x > 0 , 1, 0) %>% factor(levels = c(0, 1), labels = c("No", "Yes"))
+  return(x)
+}
+
+train <- DocumentTermMatrix(qua_corpus_c_train, control = list(dictionary = dict_10)) %>% 
+  apply(MARGIN = 2, convert_counts) #变为matrix格式而非dtm格式
+test <- DocumentTermMatrix(qua_corpus_c_test, control = list(dictionary = dict_10)) %>% 
+  apply(MARGIN = 2, convert_counts)
+```
+
+```{r}
+#e1071包
+nb_model <- naiveBayes(train, google_df_train$tech_yn, laplace = 1) #目标变量一定要处理为因子
+y_pred <- predict(nb_model, test)
+y_pred_p <- predict(nb_model, test, type = "raw")
+confusionMatrix(y_pred, google_df_test$tech_yn, mode = "prec_recall", positive = "Yes")
+```
+
+```{r}
+#naivebayes包
+nb_model_2 <- naive_bayes(train, google_df_train$tech_yn, laplace = 1)
+y_pred_2 <- predict(nb_model_2, test)
+confusionMatrix(y_pred_2, google_df_test$tech_yn, mode = "prec_recall", positive = "Yes")
+```
+
+```{r}
+control <- trainControl(method = "repeatedcv", number = 5, repeats = 10)
+grid <- expand.grid(fL = 1, usekernel = FALSE, adjust = FALSE)
+grid
+set.seed(100)
+train <- train(train, google_df_train$tech_yn, method = "nb", 
+               trControl = control, tuneGrid = grid)
+```
+

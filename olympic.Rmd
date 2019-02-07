@@ -1,0 +1,307 @@
+---
+title: "Olympic"
+author: "KIM"
+date: "2018年6月2日"
+output: html_document
+---
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(ggthemes)
+library(gridExtra)
+library(car) #scatterplotMatrix
+library(corrplot) #corrplot
+library(cluster)
+library(fpc)
+library(psych) #主成分和因子分析，选择成分数
+library(ggfortify)
+```
+
+```{r}
+oly <- fread('summer.csv', stringsAsFactors = T)
+dict <- fread('dictionary.csv', stringsAsFactors = T)
+names(dict)[names(dict)=='Country'] <- 'Country_full'
+names(dict)[names(dict)=='GDP.per.Capita'] <- 'GDP'
+oly_dict <- merge(oly, dict, by.x = 'Country', by.y = 'Code', all = TRUE)
+oly_dict <- oly_dict[complete.cases(oly_dict),]
+str(oly_dict)
+summary(oly_dict)
+```
+
+```{r}
+year_country <- oly_dict[, .(Freq = length(unique(Country))), by = Year] 
+ggplot(year_country, aes(factor(Year), Freq, group=1)) + geom_line() + geom_point() + theme_dark() + 
+  xlab('Year') + ylab('Country')  + theme(axis.text.x = element_text(angle = 45))  #country
+
+year_sport <- oly_dict[, .(Freq = length(unique(Sport))), by = Year]        
+ggplot(year_sport, aes(factor(Year), Freq, group=1)) + geom_line() + geom_point() + theme_economist() + 
+  xlab('Year') + ylab('Sport') + theme(axis.text.x = element_text(angle = 45)) #sport
+
+year_discipline <- oly_dict[, .(Freq = length(unique(Discipline))), by = Year]          
+ggplot(year_discipline, aes(factor(Year), Freq, group=1)) + geom_line() + geom_point() + theme_economist_white() + xlab('Year') + ylab('Discipline') + theme(axis.text.x = element_text(angle = 45)) #discipline
+
+year_event <- oly_dict[, .(Freq = length(unique(Event))), by = Year]       
+ggplot(year_event, aes(factor(Year), Freq, group=1)) + geom_line() +geom_point() + theme_solarized() + 
+  xlab('Year') + ylab('Event') + theme(axis.text.x = element_text(angle = 45)) #event
+
+year_gender <- oly_dict[, .(Freq = .N), by = .(Year, Gender)]       
+ggplot(year_gender, aes(factor(Year), Freq, fill = Gender)) + geom_bar(stat = 'identity') + theme_excel() + 
+  xlab('Year') + ylab('Athlete Gender') + theme(axis.text.x = element_text(angle = 45)) #gender
+
+year_gender2 <- year_gender[, Percent:= round(Freq / sum(Freq) * 100), by = Year]  
+ggplot(year_gender2, aes(factor(Year), Percent, fill = Gender)) + geom_bar(stat = 'identity') + theme_fivethirtyeight() + xlab('Year') + ylab('Athlete Gender') + 
+  geom_text(aes(label = Percent), vjust = 1.5) + theme(axis.text.x = element_text(angle = 45)) #gender
+```
+
+```{r}
+#gold
+gold <- ddply(oly_dict, .(Country), summarise, gold = sum(Medal == 'Gold'))
+ggplot(gold, aes(reorder(Country,gold), gold)) + geom_bar(stat = 'identity') + coord_flip() +
+  xlab('Country') + theme_foundation() + theme(axis.text.y = element_text(size = 5))
+
+#correlation
+gold_c <- merge(gold, dict, by.x = 'Country', by.y = 'Code', all = T)
+gold_c <- gold_c[gold_c$Country != '',]
+row.names(gold_c) <- gold_c$Country
+gold_c[,c('Country', 'Country_full')] <- NULL
+corrplot(cor(gold_c, use = 'complete.obs'), 
+         method = 'color', addCoef.col = 'black', type = 'lower', tl.col = 'black')
+```
+
+```{r}
+china <- oly_dict[Country == 'CHN']
+china[1:10]
+```
+
+```{r}
+#year-athlete
+china_year_ath <- china[, .(athlete = length(unique(Athlete))), by = Year]
+ggplot(china_year_ath, aes(factor(Year), athlete, group = 1)) + geom_line() + geom_point() + theme_igray() + xlab('Year') + ggtitle('Athelte')
+```
+
+```{r}
+#year-sport
+china_year_sport <- china[, .(sport = length(unique(Sport))), by = Year]
+ggplot(china_year_sport, aes(factor(Year), sport, group = 1)) + geom_line() + geom_point() + xlab('Year') + ylab('Sport') + ggtitle('Sport') + theme(plot.title = element_text(size = 20)) + theme_light()
+```
+
+```{r}
+china_year_gold <- china[, .(gold = sum(Medal == 'Gold')), by = Year]
+ggplot(china_year_gold, aes(factor(Year), gold, group = 1)) + geom_line() + geom_point() + theme_linedraw() + xlab('Year') + ggtitle('Gold') + theme(plot.title = element_text(size = 20, hjust = 0.5))
+```
+```{r}
+china_ath <- china[, .N, by = Athlete]
+china_ath_50 <- china_ath[order(N,decreasing = T),][1:50]
+ggplot(china_ath_50, aes(reorder(Athlete, N), N)) + geom_bar(stat = 'identity', fill = 'blue') + theme_pander() + xlab('Athlete') + coord_flip() + theme(axis.text.y = element_text(size = 5)) 
+```
+
+```{r}
+china_gold <- china[Medal == 'Gold']
+china_gold_sport <- china_gold[, .N, by = Sport][order(N, decreasing = F), ]
+china_gold_dis <- china_gold[, .N, by = Discipline][order(N, decreasing = F), ]
+china_gold_event <- china_gold[, .N, by = Event][order(N, decreasing = F), ]
+china_gold_ath <- china_gold[, .N, by = Athlete][order(N, decreasing = F), ]
+china_gold_sport
+china_gold_dis
+china_gold_event
+china_gold_ath
+```
+
+```{r}
+ggplot(china_gold_sport, aes(reorder(Sport, N), N)) + geom_bar(stat = 'identity') + coord_flip()
+ggplot(china_gold_dis, aes(reorder(Discipline, N), N)) + geom_bar(stat = 'identity') + coord_flip()
+ggplot(china_gold_event, aes(reorder(Event, N), N)) + geom_bar(stat = 'identity') + coord_flip()
+ggplot(china_gold_ath, aes(reorder(Athlete, N), N)) + geom_bar(stat = 'identity') + coord_flip()
+```
+
+```{r}
+china_gold[, .N, by = Gender]
+china_gold_m <- china_gold[Gender == 'Men']
+china_gold_w <- china_gold[Gender == 'Women']
+china_gold_m
+china_gold_w
+```
+
+```{r}
+str(oly_dict)
+length(unique(oly_dict$Country))
+```
+
+```{r}
+#gdp/pop/ath/medal/gold
+oly_c_g <- oly_dict[, .(gdp = mean(`GDP per Capita`, na.rm = T), pop = mean(Population, na.rm = T), ath = length(unique(Athlete)), medal = length(Medal), gold = sum(Medal == 'Gold')), by = Country]
+setkey(oly_c_g$Country)
+str(oly_c_g)
+```
+
+```{r}
+head(oly_c_g)
+oly_c_g[Country == 'CHN']
+```
+
+```{r}
+cor(oly_c_g[, 2:6])
+corrplot(cor(oly_c_g[, 2:6]), tl.col = 'black', type = 'lower', addCoef.col = 'black')
+corrgram::corrgram(cor(oly_c_g[, 2:6]))
+pairs(oly_c_g[, 2:6])
+```
+
+```{r}
+boxplot.stats(oly_c_g$gdp)
+boxplot.stats(oly_c_g$pop)$out
+boxplot.stats(oly_c_g$ath)$out
+boxplot.stats(oly_c_g$medal)$out
+boxplot.stats(oly_c_g$gold)$out
+```
+
+```{r}
+gdp_out <- with(oly_c_g, Country[which(gdp %in% boxplot.stats(gdp)$out)])
+pop_out <- with(oly_c_g, Country[which(pop %in% boxplot.stats(pop)$out)])
+ath_out <- with(oly_c_g, Country[which(ath %in% boxplot.stats(ath)$out)])
+medal_out <- with(oly_c_g, Country[which(medal %in% boxplot.stats(medal)$out)])
+gold_out <- with(oly_c_g, Country[which(gold %in% boxplot.stats(gold)$out)])
+Reduce(intersect, list(gdp_out, pop_out, ath_out, medal_out, gold_out)) #离群值交集
+Reduce(union, list(gdp_out, pop_out, ath_out, medal_out, gold_out)) #离群值并集
+```
+
+```{r}
+oly_c_g_s <- data.frame(oly_c_g)
+row.names(oly_c_g_s) <- oly_c_g_s$Country
+oly_c_g_s$Country <- NULL
+oly_c_g_s <- scale(oly_c_g_s)
+oly_c_g_s[1:10,]
+```
+
+```{r}
+k <- c(1: (nrow(oly_c_g_s) - 1))
+perform <- rep(NA, nrow(oly_c_g_s) - 1)
+for (i in 1:(nrow(oly_c_g_s) - 1)) {
+  set.seed(5)
+  perform[i] <- kmeans(oly_c_g_s, i)$betweenss / kmeans(oly_c_g_s, i)$totss
+}
+kp <- data.frame(cbind(k, perform))
+ggplot(kp, aes(k, perform)) + geom_point() + geom_line() + theme_solarized() + 
+  scale_x_continuous(breaks = seq(0, nrow(kp), 5))
+```
+
+```{r}
+k_best_asw <- kmeansruns(oly_c_g_s, krange = 2:10, criterion = 'asw')
+k_best_asw
+```
+
+```{r}
+set.seed(5)
+k5 <- kmeans(oly_c_g_s, 5) 
+centers <- k5$centers[k5$cluster,]
+distances <- sqrt(rowSums((oly_c_g_s - centers) ^ 2))
+head(distances)
+```
+
+```{r}
+outliers_5 <- order(distances, decreasing = T)[1:5]
+oly_c_g_s[outliers_5,]
+```
+
+```{r}
+plotcluster(oly_c_g_s, k5$cluster)
+clusplot(oly_c_g_s, k5$cluster, color = TRUE, labels = 2, lines = 0)
+```
+
+```{r}
+plot(oly_c_g_s[, c(1, 4)], pch = 'o', col = k5$cluster, cex = 1)
+points(k5$centers[, c(1, 4)], pch = 8, cex = 2, col = 1:5)
+points(oly_c_g_s[outliers_5, c(1, 4)], pch = '+', col = 4, cex = 1.5)
+```
+
+```{r}
+plot(oly_c_g_s[, c(1, 4)], pch = 'o', cex = 1)
+points(k5$centers[, c(1, 4)], pch = 8, cex = 2)
+points(oly_c_g_s[outliers_5, c(1, 4)], pch = '+', col = 'red', cex = 1.5)
+```
+
+```{r}
+plot(oly_c_g_s[, c(1, 4)], pch = 'o', cex = 1)
+points(k5$centers[, c(1, 4)], pch = 8, cex = 2)
+text(oly_c_g_s[outliers_5, c(1, 4)], labels = rownames(oly_c_g_s[outliers_5,]), col = 'red')
+```
+
+```{r}
+pch <- rep('.', nrow(oly_c_g_s))
+pch[outliers_5] <- '+'
+col <- rep('black', nrow(oly_c_g_s))
+col[outliers_5] <- 'red'
+pairs(oly_c_g_s, pch = pch, col = col)
+```
+
+```{r}
+p5 <- pam(oly_c_g_s, 5)
+p5
+```
+
+```{r}
+mean(p5$silinfo$clus.avg.widths)
+```
+
+```{r}
+plot(p5)
+```
+
+```{r}
+pamk <- pamk(oly_c_g_s)
+pamk
+```
+
+```{r}
+plot(pamk$pamobject)
+```
+
+```{r}
+clara5 <- clara(oly_c_g_s, 5)
+clara5
+```
+
+```{r}
+plot(clara5)
+```
+
+```{r}
+#主成分分析:方法1
+pca <- princomp(oly_c_g_s, cor = T) #用相关矩阵
+summary(pca, loadings = T) #1、主成分的标准差，取平方为解释的方差，即特征值，大于1的比较重要，取平方后和screeplot的y轴取值对应；2、方差贡献率，即方差占总方差比例，如果前几个方差贡献率很大可以舍去后面的；3、负载，自动省去负载低的（用prcomp不会省去）对应于每个主成份的变量线性组合的系数
+plot(pca, type = 'lines', main = "ScreePlot")
+biplot(pca)
+```
+
+```{r}
+#主成分分析：方法2（结果基本同princomp一样）
+pca_2 <- prcomp(oly_c_g_s, scale. = T) #用相关矩阵
+summary(pca_2)
+pca_2$rotation #即loading
+plot(pca_2)
+```
+
+```{r}
+#主成分分析：方法3
+fa.parallel(oly_c_g_s, fa = "pc") #确定主成分数
+pca_3 <- principal(oly_c_g_s, nfactors = 2) #提取主成分，将特征值>1的保留下来 #因为确定了主成分数量，所以结果和上面2个版本不同
+pca_3
+pca_3$loadings #loading为主成分载荷，SS loading为特征值，即解释了多少方差（对应碎石图的y轴），Proportion Var为方差贡献率
+```
+
+```{r}
+#因子分析:方法1
+fa.parallel(oly_c_g_s, fa = "fa") #确定因子数，将特征值>1的保留下来
+fa_1 <- fa(oly_c_g_s, nfactors = 2) #提取公因子
+fa_1 #因子负载和特征值
+```
+
+```{r}
+#因子分析:方法2
+fa_2 <- factanal(oly_c_g_s, factors = 2, rotation = "varimax") #提取公因子
+fa_2 #因子负载和特征值,uniqueness为公共因子不能解释的方差
+```
+
+
+
+
