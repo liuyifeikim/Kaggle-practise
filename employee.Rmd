@@ -20,6 +20,6 @@ employee %>% head(10)
 
 ```{r}
 employee %>% 
-  count(company, sort = T)
+  count(company)
 ```
 
