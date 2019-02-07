@@ -1,0 +1,217 @@
+---
+title: "Google Play Store"
+author: "KIM"
+date: "2018年12月22日"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(splitstackshape) #cSplit_e
+library(arules) #discretize
+library(mice) #md.pattern
+library(caret) #RMSE
+library(corrplot)
+library(rpart)
+library(rpart.plot)
+library(C50)
+```
+
+```{r}
+path <- "D:/K/DATA EXERCISE/Kaggle/" #固定路径
+app_full <- read_csv(paste0(path, "google-play-store-apps/googleplaystore.csv"))
+app_full %>% head()
+app <- app_full %>% select(-c(`Last Updated`, `Current Ver`, `Android Ver`, Installs, Price))#剔除无用变量
+app <- rename(app, Content = `Content Rating`)
+glimpse(app)
+```
+
+
+
+```{r}
+#单个变量数据预清理，成为可用的数据
+app$Size <- if_else(str_detect(app$Size, "^[Varies]"), "", app$Size) #无size转化为缺失值
+app$KB <- if_else(str_detect(app$Size,"[k]$"), 1, 0) #是否KB为单位
+app$Size <- str_replace(app$Size, "[M|k]", "") %>% as.numeric()#去除单位
+app$Size <- if_else(app$KB == 1, app$Size / 1024, app$Size)
+app$KB <- NULL
+
+#将genres单独拿出来
+app_genres <- app %>% select(Rating, Genres) %>% cSplit_e("Genres", ";", mode = "binary", type = "character", fill = 0, drop = T) 
+names(app_genres) <- gsub("Genres_", "" , names(app_genres)) #变量名称删除前缀
+app_genres %>% head
+app <- select(app, -Genres)
+
+glimpse(app)
+```
+
+```{r}
+#定类变量处理：单个变量
+app <- app %>% distinct(App, .keep_all = T)
+app <- app %>% filter(Category != "1.9")
+app <- app %>% filter(Type != "NaN")
+app <- app %>% filter(!(Content %in% c("Adults only 18+", "Unrated")))
+app %>% group_by(App) %>% count() %>% arrange(desc(n)) #有重复的APP，保留第1条
+app %>% group_by(Category) %>% count() %>% arrange(desc(n)) #33类
+app %>% group_by(Type) %>% count() %>% arrange(desc(n)) #2类
+app %>% group_by(Content) %>% count() %>% arrange(desc(n)) #删除少数类
+```
+
+```{r}
+#数值变量处理：单个变量
+app %>% select(Rating, Reviews, Size) %>% summary()
+ggplot(app, aes(Rating, ..density..)) + geom_histogram(bins = 30) + geom_density() #保留原始值，作为预测变量，缺失值需要做均值插补
+ggplot(app, aes(Reviews, ..density..)) + geom_histogram(bins = 30) + geom_density() #做等频分箱
+ggplot(app, aes(Size, ..density..)) + geom_histogram(bins = 30) + geom_density() #要做缺失值插补，做等频分箱
+```
+
+```{r}
+#缺失值分析
+md.pattern(app, plot = F)
+
+#缺失值插补
+app <- app %>% group_by(Category, Type, Content) %>% 
+  mutate(Rating = ifelse(is.na(Rating), mean(Rating, na.rm = T), Rating)) #分组均值插补
+app <- app %>% group_by(Category, Type, Content) %>% 
+  mutate(Size = ifelse(is.na(Size), mean(Size, na.rm = T), Size)) #分组均值插补
+
+#保留非缺失样本
+app_c <- app[complete.cases(app),]
+md.pattern(app_c, plot = F)
+dim(app_c)
+```
+
+```{r}
+#异常值处理：+-3个标准差
+outlier_sd_3_fun <- function(x){
+  mean_x = mean(x)
+  sd_x = sd(x)
+  x = ifelse(x >= mean_x + 3 * sd_x, mean_x + 3 * sd_x, x)
+  x = ifelse(x <= mean_x - 3 * sd_x, mean_x - 3 * sd_x, x)
+  return(x)
+} 
+app_c$Rating_c <- outlier_sd_3_fun(app_c$Rating)
+app_c$Reviews_c <- outlier_sd_3_fun(app_c$Reviews)
+app_c$Size_c <- outlier_sd_3_fun(app_c$Size)
+
+summary(app_c[, c("Rating_c", "Reviews_c", "Size_c")])
+```
+
+```{r}
+#分箱
+app_c$Reviews_bin <- discretize(app_c$Reviews, method = "frequency", breaks = 10) #等频分箱返回factor
+app_c$Reviews_bin %>% table(useNA = "ifany")
+
+app_c$Size_bin <- discretize(app_c$Size, method = "frequency", breaks = 10)#等频分箱返回factor
+app_c$Size_bin %>% table(useNA = "ifany")
+
+app_c$Category <- as.factor(app_c$Category) 
+app_c$Type <- as.factor(app_c$Type)
+app_c$Content <- as.factor(app_c$Content)
+
+glimpse(app_c)
+```
+
+```{r}
+#交互分析
+app_c %>% group_by(Category) %>% summarise(mean_rating = mean(Rating, na.rm = T)) %>% 
+  arrange(desc(mean_rating)) %>% 
+  ggplot(aes(reorder(Category, mean_rating), mean_rating)) + 
+  geom_bar(stat = "identity") + xlab("Category") + coord_flip()
+
+app_c %>% group_by(Type) %>% summarise(mean_rating = mean(Rating, na.rm = T)) %>% 
+  arrange(desc(mean_rating)) %>% 
+  ggplot(aes(reorder(Type, mean_rating), mean_rating)) + 
+  geom_bar(stat = "identity") + xlab("Type") + coord_flip()
+
+app_c %>% group_by(Content) %>% summarise(mean_rating = mean(Rating, na.rm = T)) %>% 
+  arrange(desc(mean_rating)) %>% 
+  ggplot(aes(reorder(Content, -mean_rating), mean_rating)) +
+  geom_bar(stat = "identity") + xlab("Content") + coord_flip()
+
+app_c %>% group_by(Reviews_bin) %>% summarise(mean_rating = mean(Rating, na.rm = T)) %>% 
+  arrange(desc(mean_rating)) %>% 
+  ggplot(aes(Reviews_bin, mean_rating)) + geom_bar(stat = "identity") + coord_flip()
+
+app_c %>% group_by(Size_bin) %>% summarise(mean_rating = mean(Rating, na.rm = T)) %>% 
+  arrange(desc(mean_rating)) %>% 
+  ggplot(aes(Size_bin, mean_rating)) + geom_bar(stat = "identity") + coord_flip()
+```
+
+```{r}
+#相关分析
+app_c %>% ungroup() %>% select(Rating_c, Reviews_c, Size_c) %>% cor() %>% 
+  corrplot(method = "color", type = "lower", tl.col = 'black', tl.cex = 1, 
+           order = "hclust", addCoef.col = "black", number.cex = 1)
+```
+
+```{r}
+lm_model <- lm(Rating ~ Category + Type + Content + Reviews_bin + Size_bin, data = app_c)
+summary(lm_model)
+plot(lm_model)
+lm_model_pred <- predict(lm_model, app_c[, -1])
+RMSE(lm_model_pred, app_c$Rating)
+cor(lm_model_pred, app_c$Rating) ^ 2 #R2
+```
+
+```{r}
+lm_model2 <- lm(Rating ~ Category + Type + Content + Reviews + Size, data = app_c)
+summary(lm_model2)
+plot(lm_model2)
+lm_model_pred2 <- predict(lm_model2, app_c)
+RMSE(lm_model_pred2, app_c$Rating)
+cor(lm_model_pred2, app_c$Rating) ^ 2 #R2
+```
+
+```{r}
+#Decision Tree
+rpart_model <- rpart(Rating_c ~ Category + Type + Content + Reviews_c + Size_c,
+                     data = app_c,
+                     method = "anova")
+rpart_model
+rpart.plot(rpart_model, type = 4, fallen.leaves = T)
+summary(rpart_model)
+```
+
+```{r}
+#caret
+ctrl <- trainControl(method = "cv", number = 10)
+set.seed(100)
+rpart_model_best <- train(Rating ~ Category + Type + Content + Reviews_bin + Size_bin, 
+                          data = app_c,
+                          method = "rpart",
+                          trControl = ctrl)
+rpart_model_best
+```
+
+```{r}
+rpart_model2 <- rpart(Rating ~ ., data = app_genres)
+rpart_model2
+```
+
+```{r}
+app_genres[,56] <- app_genres$Rating 
+app_genres <- app_genres %>% rename(Rating = V56) 
+app_genres[,1] <- NULL
+app_genres %>% head
+
+for (i in 1:54) {
+  group_mean = app_genres %>% group_by(app_genres[,i]) %>% 
+    summarise(mean_rating = mean(Rating, na.rm = T)) %>% ungroup()
+}
+group_mean
+
+for (i in 1:54) {
+  group_mean = app_genres %>% group_by(app_genres[,i]) %>% 
+    summarise(mean_rating = mean(Rating, na.rm = T)) %>% ungroup()
+}
+group_mean
+
+for (i in 1:54) {
+  group_mean[i] = aggregate(Rating ~ app_genres[,i], app_genres, mean)
+}
+group_mean
+```
+
+
