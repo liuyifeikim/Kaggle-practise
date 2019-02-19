@@ -1,0 +1,28 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(cluster)
+library(fpc)
+library(jiebaR) #segment
+library(tm)
+library(tmcn)  #segmentCN, createDTM
+library(Rwordseg) #segmentCN
+library(wordcloud)
+library(igraph)
+library(magrittr) #%>%
+library(dplyr)
+library(tidytext)
+library(tibble)
+```
+
+```{r}
+xjp2 <- read.csv("xjp(origin).csv", stringsAsFactors = F, encoding = "UTF-8")
+str(xjp2)
+isGBK(xjp2$X.c4..da..c8..dd.)
+isUTF8(xjp2$X.c4..da..c8..dd.)
+```
+

@@ -1,0 +1,179 @@
+---
+title: "XJP"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library(ggplot2)
+library(cluster)
+library(fpc)
+library(openxlsx)
+library(xlsx) #有encoding选项的read.xlsx
+library(jiebaR) #segment
+library(tm)
+library(tmcn)  #segmentCN, createDTM
+library(Rwordseg) #segmentCN
+library(wordcloud)
+library(igraph)
+library(magrittr) #%>%
+library(dplyr)
+library(tidytext)
+library(tibble)
+```
+
+```{r}
+Sys.getlocale("LC_CTYPE")
+```
+
+```{r}
+#read data
+xjp <- read.xlsx("xjp(origin).xlsx",sheetIndex = 1)
+str(xjp)
+```
+
+```{r}
+dict <- dir("./Dict") #查看文件夹文件
+for (i in length(dict)){
+  installDict(paste("./Dict", dict[i], sep='/'), dictname = dict[i], dicttype = "scel", load = T)
+}   #循环安装字典
+```
+
+```{r}
+content <- xjp$`内容`
+isGBK(content) #都是GBK
+isUTF8(content) #不是UTF8
+content_seg <- segmentCN(content, returnType = 'tm') #Rwordseg包的segmentCN,中文分词
+```
+
+```{r}
+docs <- Corpus(VectorSource(content_seg)) #转化为语料库
+docs
+inspect(docs[[1]])
+```
+
+```{r}
+remove_en <- function(x) gsub('[a-zA-Z]', '', x)           #删除英文字母
+docs_c <- tm_map(docs, content_transformer(remove_en))     #删除英文字母
+docs_c <- tm_map(docs_c, removeNumbers)                    #去除数字，可以在DTM部分转
+docs_c <- tm_map(docs_c, removePunctuation)                #去除英文标点，可以在DTM部分转
+docs_c <- tm_map(docs_c, removeWords, stopwordsCN())       #去除中文停词
+docs_c <- tm_map(docs_c, stripWhitespace)                  #最后再去除空格
+inspect(docs_c[[1]])
+```
+
+```{r}
+dtm <- createDTM(docs_c, language = 'zh', removeStopwords = T, removePunctuation = T, removeNumbers = T) #用DocumentTermMatrix()会乱码,但可以通过controllist控制词的长度
+dtm
+dtm_mat <- as.matrix(dtm)
+dim(dtm_mat)
+dtm_mat[1:5, 1:10]
+```
+
+```{r}
+word_len <- nchar(dtm$dimnames$Terms) == 1 #词汇长度=1的词，作为停词
+stop_word_1 <- dtm$dimnames$Terms[word_len]
+docs_c_2 <- tm_map(docs_c, removeWords, stop_word_1) #删除长度=1的词
+dtm_2 <- createDTM(docs_c_2, language = 'zh', 
+                   removeStopwords = T, removePunctuation = T, removeNumbers = T) #重新制作矩阵
+dtm_2
+dtm_mat_2 <- as.matrix(dtm_2)
+dim(dtm_mat_2)
+dtm_mat_2[1:5, 1:10]
+```
+
+```{r}
+wf <- colSums(dtm_mat_2)
+sort(wf, decreasing = T)[1:50] #wf[order(-wf)]
+```
+
+```{r}
+findFreqTerms(dtm_2, lowfreq = 500)  #至少出现500次的词
+findMostFreqTerms(dtm_2, 5)[1:5]     #前5个文档中出现最多的5个词
+```
+
+```{r}
+assoc <- findAssocs(dtm_2, c('习近平','环境'), corlimit = 0.6)
+assoc$`习近平`
+assoc$`环境`
+```
+
+```{r}
+dtm05 <- removeSparseTerms(dtm_2, 0.5)
+dtm05_mat_cs <- colSums(as.matrix(dtm05))
+wordcloud(names(dtm05_mat_cs), dtm05_mat_cs, min.freq = 200, colors = brewer.pal(3, "Set1"))
+```
+
+```{r}
+#聚类测试：K均值聚类
+dist_dtm05 <- dist(t(dtm05), method = "euclidean", diag = F)
+kmeans_best <- kmeansruns(dist_dtm05, krange = 2:10, criterion = 'asw')
+kmeans_best
+```
+
+```{r}
+#聚类测试：K均值聚类
+k_elbow <- function(data) {
+  k <- c(1:10)
+  bt <- rep(NA, 10)
+  for (i in 1:10) {
+    bt[i] <- kmeans(data, i)$betweenss / kmeans(data, i)$totss
+    }
+  kp <- data.frame(cbind(k, bt))
+  p_elbow <- ggplot(kp, aes(k, bt)) + geom_point() + geom_line() + 
+    scale_x_continuous(breaks = seq(0, nrow(kp), 1)) + xlab("K") + ylab("Bewteen / Total")
+  return(p_elbow)
+}
+k_elbow(dist_dtm05) #聚类效果
+```
+
+```{r}
+#聚类测试：K中心点聚类
+pam_best <- pamk(dist_dtm05, krange = 2:10, criterion = "asw")
+pam_best
+pfit <- pam(dist_dtm05, 2)
+pfit
+clusplot(pfit, lines = 0, shade = F, labels = 2, color = 1, main = "Clusplot")
+```
+
+```{r}
+#聚类测试：层次聚类
+hfit <- hclust(dist_dtm05, method = "complete")
+hfit
+plot(hfit, hang = -1)
+rect.hclust(hfit, 2, border = c("red", "blue"))
+c2 <- cutree(hfit, 2)
+c2 <- as.data.frame(c2)
+colnames(c2) <- "cluster"
+cluster <- rep(NA, 2)
+for (i in 1:2){
+  cluster[i] <- list(row.names(c3)[c3$cluster == i])
+}
+cluster #每组的内容列表
+```
+
+```{r}
+#形成词汇间关联矩阵
+tdm <- createTDM(docs_c_2, language = "zh", 
+                 removePunctuation = T, removeNumbers = T, removeStopwords = T)
+dim(tdm)
+tdm_09 <- removeSparseTerms(tdm, 0.9)
+tdm_09_matrix <- as.matrix(tdm_09)
+tdm_09_matrix[tdm_09_matrix >= 1] <- 1
+tdm_09_matrix[1:5, 1:10]
+adj_matrix <- tdm_09_matrix %*% t(tdm_09_matrix)
+adj_matrix[1:5, 1:10]
+```
+
+```{r}
+content_seg_tib <- tibble(line = 1:length(content_seg), content_seg) #1个文档1行
+content_seg_tib_tid <- content_seg_tib %>% unnest_tokens(input = content_seg, output = word) #1词1行
+content_seg_tib_tid
+```
+
+
+
+
+
+
