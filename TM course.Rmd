@@ -1,0 +1,195 @@
+---
+title: "TM course"
+output:
+  html_notebook: default
+  html_document: default
+---
+
+```{r}
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(fpc)
+library(cluster)
+library(ggplot2)
+library(igraph)
+library(Rgraphviz)
+```
+
+```{r}
+dir('.')                  #工作空间文件
+list.files()              #工作空间文件
+list.files('./email')
+DirSource('./email')
+```
+
+```{r}
+docs <- Corpus(DirSource('./email'))  #转化为语料库
+summary(docs)
+summary(docs[1:5])
+names(docs)
+length(docs)
+```
+
+```{r}
+inspect(docs[[1]])  #查看内容
+meta(docs[[1]])
+content(docs[[1]])
+```
+
+
+```{r}
+getTransformations()
+```
+
+```{r}
+docs <- tm_map(docs, stripWhitespace)    #清除空格
+docs <- tm_map(docs, removePunctuation)  #删除标点
+docs <- tm_map(docs, removeNumbers)      #删除数字
+docs <- tm_map(docs, tolower)            #变为小写
+docs <- tm_map(docs, stemDocument)       #取词干
+inspect(docs[[1]])
+```
+
+```{r}
+docs <- tm_map(docs, removeWords, stopwords('english'))  #设置停用词
+docs <- tm_map(docs, removeWords, stopwords('smart'))
+docs <- tm_map(docs, stripWhitespace) #停用词会被空格替换
+inspect(docs[[2]])
+```
+
+```{r}
+removeURL <- function(x) gsub('http^[[:space:]]*', '', x)  #删除网址
+docs <- tm_map(docs, content_transformer(removeURL))       #调用自定义函数
+removeEmail <- function(x) gsub('\\S+@\\S+', '', x)        #删除email
+docs <- tm_map(docs, content_transformer(removeEmail))     #调用自定义函数
+inspect(docs[[1]])
+```
+
+```{r}
+toSpace <- content_transformer(function(x, pattern) gsub(pattern, ' ', x)) #删除特殊字符
+docs <- tm_map(docs, toSpace, '@')
+docs <- tm_map(docs, toSpace, '/')
+docs <- tm_map(docs, toSpace, '\\|')
+docs <- tm_map(docs, stripWhitespace)  
+inspect(docs[[1]])
+```
+
+```{r}
+dtm <- DocumentTermMatrix(docs)  #转化为文档——词矩阵
+dtm
+```
+
+```{r}
+m <- as.matrix(dtm)  #方便看具体内容
+dim(m)
+m[1:4, 1:2]
+sum(m == 0) #30576
+sum(m >= 0) #34650 = 25 * 1386
+sum(m > 0)  #4074
+sum(m == 0) / sum(m >= 0) *100 #88% = sparsity
+```
+
+```{r}
+freq <- colSums(as.matrix(dtm))
+freq <- freq[order(-freq)]
+freq[1:10]
+length(freq)
+```
+```{r}
+findFreqTerms(dtm, lowfreq = 20)   #设置词出现频率的上下限
+findMostFreqTerms(dtm, 5)          #每个文档出现最多的词及词频
+```
+
+```{r}
+termFreq(docs[[1]])               #某个文档所有词频
+termFreq(docs[[1]], control = list(wordLengths = c(-Inf, 4)))  #控制词长度
+termFreq(docs[[1]], control = list(wordLengths = c(8, 9)))
+```
+
+```{r}
+dtm_s <- removeSparseTerms(dtm, 0.2) #设定每个词稀疏率上限，上限越低，词出现的频率越高
+as.matrix(dtm_s)
+dtm_s$dimnames  #dimnames(dtm_s)
+dtm_s$dimnames$Terms
+```
+
+```{r}
+findAssocs(dtm, c('money', 'bank', 'success'), corlimit = 0.75)  #词的相关系数
+```
+
+```{r}
+plot(dtm, terms = findFreqTerms(dtm, lowfreq = 40), corThreshold = 0.2, weighting = T) #词的相关图
+plot(dtm, terms = findFreqTerms(dtm, lowfreq = 40), corThreshold = 0.2, weighting = F)
+plot(dtm, terms = findFreqTerms(dtm, lowfreq = 40), corThreshold = 0.4, weighting = T)
+plot(dtm, terms = findFreqTerms(dtm, lowfreq = 35), corThreshold = 0.3, weighting = T)
+```
+
+```{r}
+wf <- data.frame(word = names(freq), freq = freq)   #词频图
+p <- ggplot(subset(wf, freq > 25), aes(word, freq))
+p <- p + geom_bar(stat = 'identity')
+p <- p + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p
+```
+
+```{r}
+dtm_s2 <- removeSparseTerms(dtm, 0.3)
+freq_2 <- colSums(as.matrix(dtm_s2))
+dark2 <- brewer.pal(6, 'Dark2')
+wordcloud(names(freq_2), freq_2, min.freq = 10, colors = dark2)  #词云
+```
+
+```{r}
+set.seed(100)
+dtm_s3 <- removeSparseTerms(dtm, 0.45)
+d <- dist(t(dtm_s3), method = 'euclidian') #词的距离矩阵
+kfit <- kmeans(d, 4)
+kfit
+```
+
+```{r}
+class(d)
+clusplot(as.matrix(d), kfit$cluster, color = T, shade = T, labels = 2, lines = 0)
+```
+
+```{r}
+dtm_s4 <- removeSparseTerms(dtm, 0.4)
+d2 <- dist(t(dtm_s4), method = 'euclidian') 
+hfit <- hclust(d2, method = 'ward.D2')  #层次聚类
+plot(hfit, hang = -1) #下端对齐
+```
+
+```{r}
+plot.new()
+group <- cutree(hfit, 3) #与hclust混合使用，对结果进行修剪
+plot(hfit, hang = -1)
+rect.hclust(hfit, 3, border = c('red', 'purple', 'green'))
+```
+
+```{r}
+tdm <- TermDocumentMatrix(docs)  #词汇——文档矩阵
+tdm_s <- removeSparseTerms(tdm, 0.15)
+termDocsMatrix <- as.matrix(tdm_s)
+termDocsMatrix[termDocsMatrix >= 1] <- 1
+termDocsMatrix
+```
+
+```{r}
+termMatrix <- termDocsMatrix %*% t(termDocsMatrix) #生成词汇在同一个文档中出现的矩阵
+termMatrix
+```
+
+```{r}
+g <- graph.adjacency(termMatrix, mode = 'undirected', weighted = T) #从矩阵创建网络
+g <- simplify(g) #删除自身的对应
+V(g)$label <- V(g)$name  #每个点起名
+V(g)$degree <- degree(g)
+set.seed(123)
+plot(g, layout = layout.fruchterman.reingold(g), vertex.color = 'cyan')
+plot(g, layout = layout_on_grid(g), vertex.color = 'green')
+plot(g, layout = layout_with_gem(g), vertex.color = 'pink')
+plot(g, layout = layout_with_fr(g), 
+     vertex.shape = 'crectangle', vertex.size = 15, vertex.color = 'blue')
+```
+
