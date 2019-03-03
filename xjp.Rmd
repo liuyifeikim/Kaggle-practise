@@ -35,7 +35,7 @@ str(xjp)
 
 ```{r}
 dict <- dir("./Dict") #查看文件夹文件
-for (i in length(dict)){
+for (i in 1:length(dict)){
   installDict(paste("./Dict", dict[i], sep='/'), dictname = dict[i], dicttype = "scel", load = T)
 }   #循环安装字典
 ```
