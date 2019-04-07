@@ -1,0 +1,140 @@
+---
+title: "NEWS"
+author: "KIM"
+date: "2019/3/27"
+output: html_document
+---
+
+
+#加载库
+```{r}
+library(tidyverse)
+library(tidytext)
+library(microbenchmark)
+library(parallel)
+library(lubridate)
+library(caret)
+pacman::p_load(e1071, naivebayes)
+pacman::p_load(tm, tmcn, Rwordseg, jiebaR)
+```
+
+#读入数据
+```{r}
+news <- read_csv("chinese_news.csv", locale = locale(encoding = "utf-8"))
+news
+news %>% count(tag)
+```
+
+
+#国内外新闻分类模型
+```{r}
+#原始数据框
+news %>% 
+  mutate(content = str_replace_all(content, "[\\d|\\s|A-Za-z|\\p{P}]", "")) %>%
+  filter(tag != "详细全文" & !is.na(content)) %>%   #剔除content没有内容的
+  mutate(id = row_number(),
+         tag = factor(tag, levels = c("国内", "国际"))) %>% 
+  select(id, content, tag) -> news_origin
+news_origin
+news_origin %>% distinct(id) %>% count() #9179
+str(news_origin)
+
+#整洁数据框，一字一行
+news_origin %>% 
+  unnest_tokens(input = content, output = word, token = "characters") %>% 
+  count(id, word) -> news_tidy
+news_tidy  
+news_tidy %>% distinct(id) %>% count() #9177
+
+#检查哪2行没有了
+setdiff(news_origin$id, news_tidy$id) #8171 8181行没有了
+news_origin[c(8171, 8181),] #有些没有content
+
+#原始数据框再处理
+news_origin %>% 
+  filter(!id %in% c(8171, 8181)) %>%   #剔除content没有内容的
+  mutate(id = row_number()) %>% 
+  select(id, content, tag) -> news_origin
+news_origin
+news_origin %>% distinct(id) %>% count() #9177
+
+#整洁数据框，一字一行
+news_origin %>% 
+  unnest_tokens(input = content, output = word, token = "characters") %>% 
+  count(id, word) -> news_tidy
+news_tidy  
+news_tidy %>% distinct(id) %>% count() #9177
+```
+
+```{r}
+#DTM矩阵
+news_tidy %>% 
+  cast_dtm(document = id, term = word, value = n) -> news_dtm
+news_dtm
+news_dtm %>% 
+  as.matrix() -> news_mat
+news_mat[1:8, 1:8]
+```
+```{r}
+#数据集划分
+set.seed(1)
+train_id <- createDataPartition(news_origin$id, p = 0.7)$Resample1
+length(train_id)
+train_id[1:30]
+
+#原始数据划分：建模时需要用上标签
+news_origin_train <- news_origin[train_id,]
+news_origin_test <- news_origin[-train_id,]
+news_origin_train
+news_origin_test
+news_origin_train %>% 
+  count(tag) %>% 
+  mutate(total = sum(n),
+         p = n / total)
+news_origin_test %>% 
+  count(tag) %>% 
+  mutate(total = sum(n),
+         p = n / total)
+```
+```{r}
+#矩阵转换为数值：转换为因子后面模型会报错
+count_num <- function(x){
+  x = ifelse(x >= 1, 1, 0)
+  return(x)
+}
+
+#多线程APPLY函数
+par_fun <- function(x){
+  cl <- makeCluster(4)    #4线程
+  x_par <- parApply(cl, x, 2, count_num) #转换为数值
+  stopCluster(cl)
+  return(x_par)
+}
+
+news_dtm_num <- par_fun(news_dtm)
+news_dtm_num[1:10, 1:10]
+dim(news_dtm_num)
+
+news_train <- news_dtm_num[train_id,]
+news_test <- news_dtm_num[-train_id,]
+news_train[1:10, 1:10]
+dim(news_train)
+news_test[1:10, 1:10]
+dim(news_test)
+
+#性能比较
+# microbenchmark(
+#   news_train_par <- par_fun(news_dtm_train),
+#   news_train_nopar <- apply(news_dtm_train, 2, count_factor),
+#   times = 10,
+#   unit = "ms"
+#   )
+```
+
+```{r}
+#贝叶斯模型
+news_nb_model <- naiveBayes(news_train, news_origin_train$tag, laplace = 1) #e1071
+news_pre <- predict(news_nb_model, news_test, type = "class")  #不能转换为factor矩阵，否则报错
+confusionMatrix(news_pre, news_origin_test$tag, positive = "国际", mode = "prec_recall") #准确率低
+```
+

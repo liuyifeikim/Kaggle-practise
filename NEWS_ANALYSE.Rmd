@@ -1,0 +1,150 @@
+---
+title: "NEWS"
+author: "KIM"
+date: "2019/3/27"
+output: html_document
+---
+
+1、判断是国内还是国际新闻:优化分词方法
+2、主题模型聚类，与结果标签进行比较
+7、词典安装
+
+
+#加载库
+```{r}
+library(tidyverse)
+library(tidytext)
+library(microbenchmark)
+library(parallel)
+library(lubridate)
+library(caret)
+pacman::p_load(e1071, naivebayes)
+pacman::p_load(tm, tmcn, Rwordseg, jiebaR)
+```
+
+#读入数据
+```{r}
+news <- read_csv("chinese_news.csv", locale = locale(encoding = "utf-8"))
+news
+news %>% count(tag)
+```
+
+#报道长短与时间关系
+```{r, fig.height=6, fig.width=15}
+news %>% 
+  mutate(content_c = str_replace_all(content, "[\\d|\\s|A-Za-z|\\p{P}]", ""),    #删除数字、不可见字符、英文字母、标点符号
+         len = str_count(content_c)) %>%   #计算长度
+  select(-content) %>% 
+  group_by(date) %>% 
+  summarize(cha_sum = sum(len)) %>% 
+  ggplot(aes(date, cha_sum)) + 
+  geom_line() +
+  ggtitle("每日报道字数总和")
+```
+```{r, fig.height=6, fig.width=15}
+news %>% 
+  mutate(content_c = str_replace_all(content, "[\\d|\\s|A-Za-z|\\p{P}]", ""),    #删除数字、不可见字符、英文字母、标点符号
+         len = str_count(content_c), #计算长度 
+         month = floor_date(date, unit = "month")) %>% #以月为单位
+  group_by(month) %>% 
+  summarize(cha_sum = sum(len, na.rm = TRUE)) %>% 
+  ggplot(aes(month, cha_sum)) + 
+  geom_line() +
+  ggtitle("每月报道字数总和")
+```
+
+
+#国内国际新闻情感得分对比
+```{r}
+#台湾大学简体中文情感极性词典ntusd
+positive <- read_csv("https://raw.githubusercontent.com/data-science-lab/sentimentCN/master/dict/%E5%8F%B0%E6%B9%BE%E5%A4%A7%E5%AD%A6%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87%E6%83%85%E6%84%9F%E6%9E%81%E6%80%A7%E8%AF%8D%E5%85%B8ntusd/ntusd-positive.txt", col_names = FALSE)
+negative <- read_csv("https://raw.githubusercontent.com/data-science-lab/sentimentCN/master/dict/%E5%8F%B0%E6%B9%BE%E5%A4%A7%E5%AD%A6%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87%E6%83%85%E6%84%9F%E6%9E%81%E6%80%A7%E8%AF%8D%E5%85%B8ntusd/ntusd-negative.txt", col_names = FALSE)
+positive <- rename(positive, word = "X1")
+negative <- rename(negative, word = "X1")
+positive
+negative
+```
+
+```{r}
+news %>% 
+  filter(tag != "详细全文") %>% 
+  mutate(content = str_replace_all(content, "[\\d|\\s|A-Za-z|\\p{P}]", ""),
+         id = row_number()) %>% 
+  select(-headline) %>% 
+  unnest_tokens(input = content, output = word, token = "words") %>%    #每词一行
+  filter(!word %in% stopwordsCN()) -> news_c                                     #去除中文停词
+news_c
+```
+```{r}
+news_c %>% 
+  mutate(positive = if_else(word %in% positive$word , 1, 0),
+         negative = if_else(word %in% negative$word , 1, 0)) %>% 
+  group_by(date, tag) %>%   #按日期，新闻类型计算得分
+  summarize(positive = sum(positive),
+            negative = sum(negative)) %>% 
+  mutate(score = (positive - negative) / (positive + negative)) -> news_pn    #计算情感得分
+news_pn
+```
+```{r}
+news_pn %>% 
+  gather(key = "type", value = "num", c(positive, negative)) %>% 
+  arrange(date, tag, type) -> news_pn_long
+news_pn_long
+```
+
+
+```{r, fig.height=8, fig.width=15}
+news_pn_long %>% 
+  ggplot(aes(date, num, color = tag)) + 
+  geom_line() +
+  facet_wrap(~ type, nrow = 2) +
+  ggtitle("每日新闻国际国内新闻情感对比")
+```
+```{r, fig.height=6, fig.width=15}
+news_pn_long %>% 
+  ggplot(aes(date, score, color = tag)) +
+  geom_line() +
+  ggtitle("情感得分比较")
+```
+
+#习近平出现次数
+```{r, fig.height=6, fig.width=15}
+news %>% 
+  mutate(xjp = str_count(content, "习近平"),
+         month = floor_date(date, unit = "month")) %>% 
+  group_by(month) %>% 
+  summarize(xjp = sum(xjp, na.rm = TRUE)) %>% 
+  ggplot(aes(month, xjp)) + 
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm")
+  scale_x_date(date_breaks = "months", date_labels = "%y-%b")
+```
+
+#关键词：tf-idf
+```{r}
+news %>% 
+  mutate(content_c = str_replace_all(content, "[\\d|\\s|A-Za-z|\\p{P}]", ""),
+         id = row_number()) %>% 
+  select(id, tag, content_c) %>%
+  filter(tag != "详细全文") %>% 
+  unnest_tokens(input = content_c, output = word, token = "words") %>% 
+  filter(!word %in% stopwordsCN()) %>% 
+  group_by(tag) %>% 
+  count(id, word) %>% 
+  bind_tf_idf(term = word, document = id, n = n) %>%   #计算tf-idf
+  top_n(30, wt = tf_idf) %>% #前30的词
+  arrange(desc(tf_idf)) %>% 
+  ungroup() %>% #不ungroup不能去重
+  distinct(word, .keep_all = TRUE) -> news_tf_idf
+news_tf_idf
+```
+
+```{r, fig.height=8, fig.width=10}
+news_tf_idf %>% 
+  ggplot(aes(reorder(word, tf_idf), tf_idf, fill = tag)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~ tag, scales = "free") +
+  xlab("words")
+```
