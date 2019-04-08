@@ -16,6 +16,7 @@ library(lubridate)
 library(caret)
 pacman::p_load(e1071, naivebayes)
 pacman::p_load(tm, tmcn, Rwordseg, jiebaR)
+pacman::p_load(devtools, stringi, pbapply, Rcpp, RcppProgress)
 ```
 
 #读入数据
@@ -136,5 +137,32 @@ dim(news_test)
 news_nb_model <- naiveBayes(news_train, news_origin_train$tag, laplace = 1) #e1071
 news_pre <- predict(news_nb_model, news_test, type = "class")  #不能转换为factor矩阵，否则报错
 confusionMatrix(news_pre, news_origin_test$tag, positive = "国际", mode = "prec_recall") #准确率低
+```
+
+#分词调整
+```{r}
+news_origin
+```
+
+#字典安装
+```{r}
+#Rwordseg安装方法
+dict <- dir("./dict") #查看文件夹文件
+dict
+for (i in 1:length(dict)){
+  installDict(paste("./dict/", dict[i], sep = ""), dictname = dict[i], dicttype = "scel", load = T)
+ }   #循环安装字典
+listDict()
+
+#jieba安装方法
+dict <- dir("./dict") #查看文件夹文件
+dict
+install_github("qinwf/cidian")
+decode_scel(scel = "细胞词库路径",output = "输出文件路径")
+```
+
+#jieba分词
+```{r}
+
 ```
 
