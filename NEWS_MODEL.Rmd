@@ -5,6 +5,7 @@ date: "2019/3/27"
 output: html_document
 ---
 
+分字和分词都很差，需要删除一些低频词
 
 #加载库
 ```{r}
@@ -79,7 +80,7 @@ news_mat[1:8, 1:8]
 ```{r}
 #数据集划分
 set.seed(1)
-train_id <- createDataPartition(news_origin$id, p = 0.7)$Resample1
+train_id <- createDataPartition(news_origin$tag, p = 0.7)$Resample1
 length(train_id)
 train_id[1:30]
 
@@ -105,14 +106,14 @@ count_num <- function(x){
 }
 
 #多线程APPLY函数
-par_fun <- function(x){
-  cl <- makeCluster(4)    #4线程
+par_fun <- function(x, i){
+  cl <- makeCluster(i)    #多线程
   x_par <- parApply(cl, x, 2, count_num) #转换为数值
   stopCluster(cl)
   return(x_par)
 }
 
-news_dtm_num <- par_fun(news_dtm)
+news_dtm_num <- par_fun(news_dtm, 4)
 news_dtm_num[1:10, 1:10]
 dim(news_dtm_num)
 
@@ -139,26 +140,67 @@ news_pre <- predict(news_nb_model, news_test, type = "class")  #不能转换为f
 confusionMatrix(news_pre, news_origin_test$tag, positive = "国际", mode = "prec_recall") #准确率低
 ```
 
-#分词调整
-```{r}
-news_origin
-```
+
+
+#分词调整:ANSJ
 
 #字典安装
 ```{r}
-#Rwordseg安装方法
 dict <- dir("./dict") #查看文件夹文件
 dict
 for (i in 1:length(dict)){
   installDict(paste("./dict/", dict[i], sep = ""), dictname = dict[i], dicttype = "scel", load = T)
  }   #循环安装字典
 listDict()
+```
 
+#ANSJ分词
+```{r}
+news_origin %>% 
+  mutate(content_seg = segmentCN(content, returnType = "tm")) %>% 
+  select(id, content_seg) -> news_seg_ansj
+news_seg_ansj
+```
+
+#转化为DTM
+```{r}
+news_seg_ansj %>% 
+  unnest_tokens(input = content_seg, output = word) %>% 
+  anti_join(as.tibble(stopwordsCN()), by = c("word" = "value")) %>% 
+  count(id, word) %>% 
+  cast_dtm(document = id, term = word, value = n) -> news_dtm_ansj
+news_dtm_ansj
+```
+
+#训练集测试集划分
+```{r}
+news_dtm_num_ansj <- par_fun(news_dtm_ansj, 4)
+news_dtm_num_ansj[1:10, 1:10]
+dim(news_dtm_num_ansj)
+
+news_train_ansj <- news_dtm_num_ansj[train_id,]
+news_test_ansj <- news_dtm_num_ansj[-train_id,]
+news_train_ansj[1:10, 1:10]
+dim(news_train_ansj)
+news_test_ansj[1:10, 1:10]
+dim(news_test_ansj)
+```
+
+```{r}
+#贝叶斯模型
+news_ansj_nb_model <- naiveBayes(news_train_ansj, news_origin_train$tag, laplace = 1) #e1071
+news_ansj_pre <- predict(news_ansj_nb_model, news_test_ansj, type = "class")  
+confusionMatrix(news_ansj_pre, news_origin_test$tag, positive = "国际", mode = "prec_recall") #准确率低
+```
+
+
+```{r}
 #jieba安装方法
-dict <- dir("./dict") #查看文件夹文件
-dict
+library(devtools)
+
+
 install_github("qinwf/cidian")
-decode_scel(scel = "细胞词库路径",output = "输出文件路径")
+decode_scel(scel = "./dict", output = "D:/Program Files/Microsoft/R Client/R_SERVER/library/jiebaRD/dict")
 ```
 
 #jieba分词
