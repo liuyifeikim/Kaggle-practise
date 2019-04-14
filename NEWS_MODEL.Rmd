@@ -66,6 +66,7 @@ news_origin %>%
   count(id, word) -> news_tidy
 news_tidy  
 news_tidy %>% distinct(id) %>% count() #9177
+news_tidy %>% count(n)
 ```
 
 ```{r}
@@ -97,7 +98,10 @@ news_origin_test %>%
   count(tag) %>% 
   mutate(total = sum(n),
          p = n / total)
+train_tag <- news_origin_train$tag
+test_tag <- news_origin_test$tag
 ```
+
 ```{r}
 #矩阵转换为数值：转换为因子后面模型会报错
 count_num <- function(x){
@@ -135,9 +139,52 @@ dim(news_test)
 
 ```{r}
 #贝叶斯模型
-news_nb_model <- naiveBayes(news_train, news_origin_train$tag, laplace = 1) #e1071
+news_nb_model <- naiveBayes(news_train, train_tag, laplace = 1) #e1071
 news_pre <- predict(news_nb_model, news_test, type = "class")  #不能转换为factor矩阵，否则报错
-confusionMatrix(news_pre, news_origin_test$tag, positive = "国际", mode = "prec_recall") #准确率低
+confusionMatrix(news_pre, test_tag, positive = "国际", mode = "prec_recall") #准确率低
+```
+
+
+#删除部分低频字
+```{r}
+news_tidy %>% 
+  count(word) %>% 
+  count(nn)
+
+news_tidy %>% 
+  count(word) %>% 
+  filter(nn == 1) %>% 
+  select(word) -> one   #只出现过1次的词
+one
+
+news_tidy %>% 
+  anti_join(one, by = "word") %>% 
+  cast_dtm(document = id, term = word, value = n) -> news_dtm_2
+news_dtm_2
+news_dtm_2 %>% 
+  as.matrix() -> news_mat_2
+news_mat_2[1:10, 1:10]
+```
+
+```{r}
+#训练集测试集划分
+news_dtm_num_2 <- par_fun(news_dtm_2, 4)
+news_dtm_num_2[1:10, 1:10]
+dim(news_dtm_num_2)
+
+news_train_2 <- news_dtm_num_2[train_id,]
+news_test_2 <- news_dtm_num_2[-train_id,]
+news_train_2[1:10, 1:10]
+dim(news_train_2)
+news_test_2[1:10, 1:10]
+dim(news_test_2)
+```
+
+```{r}
+#贝叶斯模型
+news_nb_model_2 <- naiveBayes(news_train_2, train_tag, laplace = 1) #e1071
+news_pre_2 <- predict(news_nb_model_2, news_test_2, type = "class")  #不能转换为factor矩阵，否则报错
+confusionMatrix(news_pre_2, test_tag, positive = "国际", mode = "prec_recall") #准确率低
 ```
 
 
@@ -167,7 +214,11 @@ news_seg_ansj
 news_seg_ansj %>% 
   unnest_tokens(input = content_seg, output = word) %>% 
   anti_join(as.tibble(stopwordsCN()), by = c("word" = "value")) %>% 
-  count(id, word) %>% 
+  count(id, word) -> news_seg_ansj_tidy
+news_seg_ansj_tidy
+news_seg_ansj_tidy %>% count(n)
+
+news_seg_ansj_tidy %>% 
   cast_dtm(document = id, term = word, value = n) -> news_dtm_ansj
 news_dtm_ansj
 ```
@@ -192,6 +243,7 @@ news_ansj_nb_model <- naiveBayes(news_train_ansj, news_origin_train$tag, laplace
 news_ansj_pre <- predict(news_ansj_nb_model, news_test_ansj, type = "class")  
 confusionMatrix(news_ansj_pre, news_origin_test$tag, positive = "国际", mode = "prec_recall") #准确率低
 ```
+
 
 
 ```{r}
