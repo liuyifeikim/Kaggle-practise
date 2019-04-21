@@ -1,0 +1,109 @@
+---
+title: "NEWS"
+author: "KIM"
+date: "2019/3/27"
+output: html_document
+---
+
+#自变量：积极词数、消极词数、情感得分、习近平出现次数
+
+#加载库
+```{r}
+library(tidyverse)
+library(tidytext)
+library(microbenchmark)
+library(parallel)
+library(lubridate)
+library(caret)
+pacman::p_load(e1071, naivebayes)
+pacman::p_load(tm, tmcn, Rwordseg, jiebaR)
+pacman::p_load(devtools, stringi, pbapply, Rcpp, RcppProgress)
+```
+
+
+#读入数据
+```{r}
+news <- read_csv("chinese_news.csv", locale = locale(encoding = "utf-8"))
+news
+news %>% count(tag)
+```
+
+
+#国内外新闻分类模型
+```{r}
+news %>% 
+  mutate(content = str_replace_all(content, "[\\d|\\s|A-Za-z|\\p{P}]", "")) %>%
+  filter(tag != "详细全文" & !is.na(content)) %>%   #剔除content没有内容的
+  mutate(id = row_number(),
+         tag = factor(tag)) %>%                     #混淆矩阵要求因子
+  select(id, content, tag) -> news_origin
+news_origin
+str(news_origin$tag)
+```
+```{r}
+#ANSJ分词
+news_origin %>% 
+  mutate(content_seg = segmentCN(content, returnType = "tm")) %>% 
+  select(id, content_seg) %>% 
+    unnest_tokens(input = content_seg, output = word, token = "words") %>%    #每词一行
+    filter(!word %in% stopwordsCN()) -> news_seg_ansj_c                       #去除中文停词
+news_seg_ansj_c
+```
+```{r}
+#计算情感得分
+news_seg_ansj_c %>% 
+  mutate(positive = if_else(word %in% positive$word , 1, 0),
+         negative = if_else(word %in% negative$word , 1, 0),
+         xjp = if_else(word == "习近平", 1, 0)) %>% 
+  group_by(id) %>%   #按日期，新闻类型计算得分
+  summarize(positive = sum(positive),
+            negative = sum(negative),
+            score = (positive - negative) / (positive + negative),
+            xjp = sum(xjp)) -> news_seg_pn    #计算情感得分
+news_seg_pn
+news_seg_pn %>% tail()
+```
+```{r}
+#和计算出情感得分的数据样本保持一致
+news_origin %>% 
+  filter(id %in% news_seg_pn$id) -> news_origin2 
+news_origin2
+
+#划分训练集和测试集
+set.seed(1)
+train_id <- createDataPartition(news_origin2$tag, p = 0.7)$Resample1
+length(train_id)
+
+#原始数据划分：建模时需要用上标签
+news_origin_train <- news_origin2[train_id,]
+news_origin_test <- news_origin2[-train_id,]
+
+news_seg_pn_train <- news_seg_pn[train_id,] %>% select(-id)
+news_seg_pn_test <- news_seg_pn[-train_id,] %>% select(-id)
+news_seg_pn_train
+news_seg_pn_test
+
+train_tag <- news_origin_train$tag
+test_tag <- news_origin_test$tag
+```
+```{r}
+#模型函数
+nb_model_fun <- function(train_data, train_tag, test_data, test_tag){
+  nb_model <- naiveBayes(train_data, train_tag)
+  nb_model_pre <- predict(nb_model, test_data, type = "class")
+  cm <- confusionMatrix(nb_model_pre, test_tag, mode = "prec_recall")
+  return(cm)
+}
+nb_model_fun(news_seg_pn_train, train_tag, news_seg_pn_test, test_tag)
+```
+```{r}
+nb_model <- naiveBayes(news_seg_pn_train, train_tag)
+nb_model_pre <- predict(nb_model, news_seg_pn_test, type = "class")
+news_seg_pn_test_full <- 
+  news_seg_pn_test %>% 
+  mutate(p = nb_model_pre,
+         a = test_tag)
+news_seg_pn_test_full
+confusionMatrix(news_seg_pn_test_full$p, news_seg_pn_test_full$a, mode = "prec_recall")
+```
+
