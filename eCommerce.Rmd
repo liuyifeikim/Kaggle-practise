@@ -1,0 +1,149 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+数据来源：https://www.kaggle.com/dschettler8845/recsys-2020-ecommerce-dataset
+
+
+```{r, message=FALSE}
+library(tidyverse)
+library(recommenderlab)
+library(arrow)
+library(pryr)
+library(skimr)
+library(tictoc)
+```
+
+
+```{r}
+# 读入数据
+path <- "D:/K/DATA EXERCISE/Kaggle/eCommerce"
+train <- read_parquet(file.path(path, "train.parquet"))
+train <- train %>%
+  mutate(product_id = as.integer(product_id),
+         user_id = as.integer(user_id))
+train
+object_size(train)
+```
+
+
+```{r}
+skim(train)
+```
+
+```{r}
+n_distinct(train$user_id)
+n_distinct(train$product_id)
+```
+
+```{r}
+train %>% count(event_type, sort = TRUE)
+train %>% count(brand, sort = TRUE)
+train %>% count(target, sort = TRUE)
+train %>% count(cat_0, sort = TRUE)
+train %>% count(cat_1, sort = TRUE)
+train %>% count(cat_2, sort = TRUE)
+train %>% count(cat_3, sort = TRUE)
+```
+
+
+```{r}
+# 保留关键数据：用户购买物品数
+train %>% 
+  filter(cat_0 == "construction") %>% 
+  group_by(user_id) %>% 
+  summarise(n = n_distinct(product_id)) %>% 
+  summarise(q1 =  quantile(n, 0.01),
+            q5 =  quantile(n, 0.05),
+            q10 = quantile(n, 0.10),
+            q50 = quantile(n, 0.50),
+            q80 = quantile(n, 0.80),
+            q90 = quantile(n, 0.90),
+            q95 = quantile(n, 0.95),
+            q99 = quantile(n, 0.99))
+```
+
+```{r}
+# 保留关键数据：物品购买用户数
+train %>% 
+  filter(cat_0 == "construction") %>% 
+  group_by(product_id) %>% 
+  summarise(n = n_distinct(user_id)) %>% 
+  summarise(q1 =  quantile(n, 0.01),
+            q5 =  quantile(n, 0.05),
+            q10 = quantile(n, 0.10),
+            q50 = quantile(n, 0.50),
+            q80 = quantile(n, 0.80),
+            q90 = quantile(n, 0.90),
+            q95 = quantile(n, 0.95),
+            q99 = quantile(n, 0.99))
+```
+
+```{r}
+# 保留关键数据
+train %>% 
+  filter(cat_0 == "construction") %>% 
+  group_by(user_id) %>% 
+  summarise(n = n_distinct(product_id)) %>% 
+  filter(n >= 3) %>% 
+  select(user_id) %>% 
+  pull() -> user_rele
+
+train %>% 
+  filter(cat_0 == "construction") %>% 
+  group_by(product_id) %>% 
+  summarise(n = n_distinct(user_id)) %>% 
+  filter(n >= 10) %>% 
+  select(product_id) %>% 
+  pull() -> product_rele
+
+length(user_rele)
+length(product_rele)
+```
+
+
+```{r}
+# 构建分析对象
+train_construction <- train %>% filter(cat_0 == "construction")
+train_construction_rele <- train_construction %>% 
+  count(user_id, product_id) %>% 
+  filter(user_id %in% user_rele & product_id %in% product_rele)
+
+# 查看结果
+train_construction_rele
+object_size(train_construction_rele)
+```
+
+
+```{r}
+# 保存用户id
+train_construction_user_id <- train_construction_rele %>% distinct(user_id) %>% pull()
+
+# 转化为矩阵
+train_construction_matrix <- train_construction_rele %>% 
+  pivot_wider(id_cols = user_id, names_from = product_id, values_from = n, values_fill = 0) %>% 
+  select(-user_id) %>% 
+  as.matrix()
+rownames(train_construction_matrix) <- train_construction_user_id
+colnames(train_construction_matrix) <- paste("item", colnames(train_construction_matrix), sep = "_")
+
+# 查看结果
+train_construction_matrix[1:10, 1:10]
+dim(train_construction_matrix)
+```
+
+
+```{r}
+# 转化为binaryRatingMatrix
+train_binary_mat <- as(train_construction_matrix, "binaryRatingMatrix")
+train_binary_mat
+```
+
+
+```{r}
+min(rowCounts(train_binary_mat))
+min(colCounts(train_binary_mat))
+min(rowCounts(train_binary_mat[rowCounts(train_binary_mat) >= 3, colCounts(train_binary_mat) >= 10]))
+min(colCounts(train_binary_mat[rowCounts(train_binary_mat) >= 3, colCounts(train_binary_mat) >= 10]))
+```
